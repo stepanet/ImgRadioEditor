@@ -144,8 +144,8 @@ struct ContentView: View {
                 Button(action: exportCsv) { Label("Экспорт", systemImage: "square.and.arrow.up") }
                     .disabled(image.channels.isEmpty || isBusy || isDisconnecting)
                 Button(action: exportFile) { Label("Сохранить", systemImage: "sdcard") }
-                    .disabled(image.rawData == nil || isBusy || isDisconnecting || image.radioModel == .uv9k)
-                    .help(image.radioModel == .uv9k ? "Сохранение KG-UV9K пока не поддерживается" : "Сохранить образ")
+                    .disabled(image.rawData == nil || isBusy || isDisconnecting)
+                    .help("Сохранить образ")
                 
                 Divider()
                 
@@ -329,14 +329,16 @@ struct ContentView: View {
     
     private func exportFile() {
         guard let original = image.rawData else { return }
-        guard image.radioModel == .k5 else {
-                statusMessage = "Сохранение KG-UV9K пока не поддерживается"
-                return
-            }
-        let newData = K5ImageParser.serialize(channels: image.channels, originalData: original)
+        let newData: Data
+        switch image.radioModel {
+        case .k5:
+            newData = K5ImageParser.serialize(channels: image.channels, originalData: original)
+        case .uv9k:
+            newData = WouxunParser.serialize(channels: image.channels, originalData: original)
+        }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType.data]
-        panel.nameFieldStringValue = "uvk5_edited.img"
+        panel.nameFieldStringValue = image.radioModel == .uv9k ? "uv9k_edited.img" : "uvk5_edited.img"
         if panel.runModal() == .OK, let url = panel.url {
             try? newData.write(to: url)
         }
