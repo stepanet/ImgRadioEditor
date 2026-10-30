@@ -21,16 +21,6 @@
         {
           "target": "ImgRadioEditor",
           "exclusions": [
-            "BackUp301020261622/ContentView.swift",
-            "BackUp301020261622/CsvExporter.swift",
-            "BackUp301020261622/CsvImporter.swift",
-            "BackUp301020261622/ImgRadioEditorApp.swift",
-            "BackUp301020261622/K5ImageParser.swift",
-            "BackUp301020261622/K5ImageParserTests.swift",
-            "BackUp301020261622/Models.swift",
-            "BackUp301020261622/SerialManager.swift",
-            "BackUp301020261622/SerialPort.swift",
-            "BackUp301020261622/WouxunParser.swift",
             "K5ImageParserTests.swift",
           ],
         }, {
