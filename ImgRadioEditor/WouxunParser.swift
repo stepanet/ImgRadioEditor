@@ -50,26 +50,12 @@ class WouxunParser {
         
 
         for i in 0..<channelsCount {
-            
-            
-            
-            
             let offset = channelsStart + i * channelSize
             let chunk = data.subdata(in: offset..<offset + channelSize)
-            let b0 = chunk[chunk.startIndex + 0]
-            let b1 = chunk[chunk.startIndex + 1]
-            let b2 = chunk[chunk.startIndex + 2]
-            let b3 = chunk[chunk.startIndex + 3]
-            
-
-            let manual = (UInt32(b0) << 24) | (UInt32(b1) << 16) | (UInt32(b2) << 8) | UInt32(b3)
-            
             let rxFreqRaw = readU32BE(chunk, 0)
-                        
             let txFreqRaw = readU32BE(chunk, 4)
             let txToneRaw = readU16BE(chunk, 8)
             let rxToneRaw = readU16BE(chunk, 10)
-            let misc = chunk[chunk.startIndex + 12]
             let flags = chunk[chunk.startIndex + 13]
             let state = chunk[chunk.startIndex + 14]
 

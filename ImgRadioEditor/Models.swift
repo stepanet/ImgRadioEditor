@@ -7,7 +7,7 @@ struct K5Channel: Identifiable, Hashable {
     var name: String
     var rxFreq: Double
     var txFreq: Double
-    var offsetDir: Int     // 0 - none, 1 - plus, 2 - minus
+    var offsetDir: Int     // 0 - none, 1 - plus, 2 - minus, 3 - TX off, 4 - split (UV9K)
     var txPower: Int
     var bandwidth: Int
     var isScanlist1: Bool
@@ -34,17 +34,36 @@ struct K5Channel: Identifiable, Hashable {
         if toneMode == 2 { return String(format: "DCS %03d", Int(txTone)) }
         return ""
     }
+    
+    /// C: текстовая метка для offsetDir 3/4 (UV9K).
+    var offsetDirLabel: String? {
+        switch offsetDir {
+        case 3: return "TX off"
+        case 4: return "Split"
+        default: return nil
+        }
+    }
 }
 
 /// P3.4: @MainActor — все обращения к channels/rawData/fileURL
 /// происходят на главном потоке. UI-биндинги в ContentView уже main.
 /// Из фоновых задач (downloadFromRadio/uploadToRadio) изменения
 /// делаются через DispatchQueue.main.async — это совместимо.
+////// C: тип загруженной рации (для адаптации UI).
+
+
+enum RadioModelKind: String {
+    case k5 = "Quansheng K5/K6"
+    case uv9k = "Wouxun KG-UV9K"
+}
+///
 @MainActor
 final class MemoryImage: ObservableObject {
     @Published var channels: [K5Channel] = []
     var rawData: Data? = nil
     var fileURL: URL? = nil
+    /// C: тип загруженной рации.
+    var radioModel: RadioModelKind = .k5
     
     // Массовое редактирование
     func applyBulkEdit(to indices: Set<Int>, power: Int?, bandwidth: Int?, scan1: Bool?, scan2: Bool?, scan3: Bool?) {

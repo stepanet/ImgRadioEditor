@@ -11,26 +11,7 @@
     ],
   },
   "files": [
-    {
-      "kind": "folder",
-      "path": "ImgRadioEditor",
-      "target-membership": [
-        "ImgRadioEditor",
-      ],
-      "membership-exceptions": [
-        {
-          "target": "ImgRadioEditor",
-          "exclusions": [
-            "K5ImageParserTests.swift",
-          ],
-        }, {
-          "target": "ImgRadioEditorTests",
-          "inclusions": [
-            "K5ImageParserTests.swift",
-          ],
-        },
-      ],
-    },
+    { "kind": "folder", "path": "ImgRadioEditor", "target-membership": [ "ImgRadioEditor" ] },
     { "kind": "folder", "path": "ImgRadioEditorTests", "target-membership": [ "ImgRadioEditorTests" ] },
     {
       "kind": "group",

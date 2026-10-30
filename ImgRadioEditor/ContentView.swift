@@ -106,7 +106,7 @@ struct ContentView: View {
             if selectedIndices.count == 1,
                let idx = selectedIndices.first,
                idx > 0, idx <= image.channels.count {
-                ChannelEditView(channel: $image.channels[idx - 1])
+                ChannelEditView(channel: $image.channels[idx - 1], isUV9K: image.radioModel == .uv9k)
             } else if selectedIndices.count > 1 {
                 BulkEditView(
                     selectedCount: selectedIndices.count,
@@ -144,7 +144,8 @@ struct ContentView: View {
                 Button(action: exportCsv) { Label("Экспорт", systemImage: "square.and.arrow.up") }
                     .disabled(image.channels.isEmpty || isBusy || isDisconnecting)
                 Button(action: exportFile) { Label("Сохранить", systemImage: "sdcard") }
-                    .disabled(image.rawData == nil || isBusy || isDisconnecting)
+                    .disabled(image.rawData == nil || isBusy || isDisconnecting || image.radioModel == .uv9k)
+                    .help(image.radioModel == .uv9k ? "Сохранение KG-UV9K пока не поддерживается" : "Сохранить образ")
                 
                 Divider()
                 
@@ -164,12 +165,15 @@ struct ContentView: View {
                     Button(action: downloadFromRadio) {
                         Label("Скачать", systemImage: "arrow.down.circle")
                     }
-                    .disabled(isBusy || isDisconnecting)
-                    
+                    .disabled(isBusy || isDisconnecting || image.radioModel == .uv9k)
+                    .help(image.radioModel == .uv9k ? "Serial для KG-UV9K пока не поддерживается" : "")
+
                     Button(action: uploadToRadio) {
                         Label("Залить", systemImage: "arrow.up.circle")
                     }
-                    .disabled(isBusy || isDisconnecting || image.rawData == nil)
+                    .disabled(isBusy || isDisconnecting || image.rawData == nil || image.radioModel == .uv9k)
+                    .help(image.radioModel == .uv9k ? "Serial для KG-UV9K пока не поддерживается" : "")
+                    
                 }
             }
         }
@@ -200,11 +204,24 @@ struct ContentView: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url {
-            if let data = try? Data(contentsOf: url) {
-                if data.count < K5ImageParser.fileSize { return }
+            guard let data = try? Data(contentsOf: url) else { return }
+            
+            // C: определяем тип дампа по размеру.
+            // K5/K6 — 8192 байта (0x2000). UV9K — 32768+ (0x8000), CHIRP дописывает метаданные.
+            if data.count == K5ImageParser.fileSize {
+                image.radioModel = .k5
                 image.rawData = data
                 image.channels = K5ImageParser.parse(data)
                 image.fileURL = url
+                statusMessage = "Открыт образ K5/K6 (\(data.count) байт)"
+            } else if data.count >= 0x8000 {
+                image.radioModel = .uv9k
+                image.rawData = data
+                image.channels = WouxunParser.parse(data)
+                image.fileURL = url
+                statusMessage = "Открыт образ KG-UV9K (\(data.count) байт, \(image.channels.filter { !$0.isEmpty }.count) каналов)"
+            } else {
+                statusMessage = "Неизвестный формат: \(data.count) байт (ожидается 8192 или ≥32768)"
             }
         }
     }
@@ -312,6 +329,10 @@ struct ContentView: View {
     
     private func exportFile() {
         guard let original = image.rawData else { return }
+        guard image.radioModel == .k5 else {
+                statusMessage = "Сохранение KG-UV9K пока не поддерживается"
+                return
+            }
         let newData = K5ImageParser.serialize(channels: image.channels, originalData: original)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType.data]
@@ -346,6 +367,10 @@ struct ContentView: View {
         
         DispatchQueue.global(qos: .userInitiated).async {
             guard serialManager.startSession() else {
+                guard image.radioModel == .k5 else {
+                        statusMessage = "Serial для KG-UV9K пока не поддерживается"
+                        return
+                    }
                 DispatchQueue.main.async {
                     statusMessage = serialManager.isAborting
                         ? "Скачивание отменено"
@@ -409,6 +434,10 @@ struct ContentView: View {
     private func uploadToRadio() {
         guard isConnected, !isBusy, !isDisconnecting else { return }
         guard let original = image.rawData else { return }
+        guard image.radioModel == .k5 else {
+                statusMessage = "Serial для KG-UV9K пока не поддерживается"
+                return
+            }
         guard original.count >= K5ImageParser.fileSize else {
             statusMessage = "Ошибка: размер образа меньше \(K5ImageParser.fileSize) байт"
             return
@@ -546,7 +575,12 @@ struct ChannelRowView: View {
 
 // MARK: - ChannelEditView
 struct ChannelEditView: View {
+    
     @Binding var channel: K5Channel
+    /// C: UV9K — скрываем блок тонов (несовместимая модель) и лимит имени 8.
+    
+    var isUV9K: Bool = false
+    
     
     
     // P2.12: последние валидные значения — для отката при неверном вводе.
@@ -686,9 +720,9 @@ struct ChannelEditView: View {
                             TextField("Имя канала", text: $channel.name)
                                 .textFieldStyle(.roundedBorder)
                                 .onChange(of: channel.name) { _, newValue in
-                                        // P1.11: 15 байт в EEPROM (16-й — терминатор 0x00)
-                                        if newValue.count > 15 {
-                                            channel.name = String(newValue.prefix(15))
+                                    let maxLen = isUV9K ? 8 : 15
+                                        if newValue.count > maxLen {
+                                            channel.name = String(newValue.prefix(maxLen))
                                         }
                                     }
                         }
@@ -753,80 +787,81 @@ struct ChannelEditView: View {
                     }.padding(8)
                 } label: { Label("Настройки", systemImage: "slider.horizontal.3") }
 
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Label("Режим", systemImage: "lock.fill").frame(width: 100, alignment: .leading)
-                            Picker("", selection: $channel.toneMode) {
-                                Text("OFF").tag(0)
-                                Text("CTCSS").tag(1)
-                                Text("DCS").tag(2)
-                            }
-                            .pickerStyle(.segmented)
-                            .onChange(of: channel.toneMode) { _, newMode in
-                                if newMode == 1 {
-                                    if !K5ImageParser.ctcssTones.contains(channel.txTone) {
-                                        channel.txTone = K5ImageParser.ctcssTones[0]
-                                    }
-                                    if !K5ImageParser.ctcssTones.contains(channel.rxTone) {
-                                        channel.rxTone = K5ImageParser.ctcssTones[0]
-                                    }
-                                } else if newMode == 2 {
-                                    if !K5ImageParser.dcsCodes.contains(Int(channel.txTone)) {
-                                        channel.txTone = Double(K5ImageParser.dcsCodes[0])
-                                    }
-                                    if !K5ImageParser.dcsCodes.contains(Int(channel.rxTone)) {
-                                        channel.rxTone = Double(K5ImageParser.dcsCodes[0])
-                                    }
-                                }
-                            }
-                        }
-
-                        if channel.toneMode == 1 {
+                if !isUV9K {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Label("TX CTCSS", systemImage: "waveform").frame(width: 100, alignment: .leading)
-                                Picker("", selection: txCtcssIndex) {
-                                    ForEach(0..<K5ImageParser.ctcssTones.count, id: \.self) { i in
-                                        Text(String(format: "%.1f Гц", K5ImageParser.ctcssTones[i])).tag(i)
+                                Label("Режим", systemImage: "lock.fill").frame(width: 100, alignment: .leading)
+                                Picker("", selection: $channel.toneMode) {
+                                    Text("OFF").tag(0)
+                                    Text("CTCSS").tag(1)
+                                    Text("DCS").tag(2)
+                                }
+                                .pickerStyle(.segmented)
+                                .onChange(of: channel.toneMode) { _, newMode in
+                                    if newMode == 1 {
+                                        if !K5ImageParser.ctcssTones.contains(channel.txTone) {
+                                            channel.txTone = K5ImageParser.ctcssTones[0]
+                                        }
+                                        if !K5ImageParser.ctcssTones.contains(channel.rxTone) {
+                                            channel.rxTone = K5ImageParser.ctcssTones[0]
+                                        }
+                                    } else if newMode == 2 {
+                                        if !K5ImageParser.dcsCodes.contains(Int(channel.txTone)) {
+                                            channel.txTone = Double(K5ImageParser.dcsCodes[0])
+                                        }
+                                        if !K5ImageParser.dcsCodes.contains(Int(channel.rxTone)) {
+                                            channel.rxTone = Double(K5ImageParser.dcsCodes[0])
+                                        }
                                     }
                                 }
-                                .labelsHidden()
-                                .frame(width: 140)
                             }
-                            HStack {
-                                Label("RX CTCSS", systemImage: "waveform.path").frame(width: 100, alignment: .leading)
-                                Picker("", selection: rxCtcssIndex) {
-                                    ForEach(0..<K5ImageParser.ctcssTones.count, id: \.self) { i in
-                                        Text(String(format: "%.1f Гц", K5ImageParser.ctcssTones[i])).tag(i)
+                            
+                            if channel.toneMode == 1 {
+                                HStack {
+                                    Label("TX CTCSS", systemImage: "waveform").frame(width: 100, alignment: .leading)
+                                    Picker("", selection: txCtcssIndex) {
+                                        ForEach(0..<K5ImageParser.ctcssTones.count, id: \.self) { i in
+                                            Text(String(format: "%.1f Гц", K5ImageParser.ctcssTones[i])).tag(i)
+                                        }
                                     }
+                                    .labelsHidden()
+                                    .frame(width: 140)
                                 }
-                                .labelsHidden()
-                                .frame(width: 140)
-                            }
-                        } else if channel.toneMode == 2 {
-                            HStack {
-                                Label("TX DCS", systemImage: "number").frame(width: 100, alignment: .leading)
-                                Picker("", selection: txDcsIndex) {
-                                    ForEach(0..<K5ImageParser.dcsCodes.count, id: \.self) { i in
-                                        Text(String(format: "%03d", K5ImageParser.dcsCodes[i])).tag(i)
+                                HStack {
+                                    Label("RX CTCSS", systemImage: "waveform.path").frame(width: 100, alignment: .leading)
+                                    Picker("", selection: rxCtcssIndex) {
+                                        ForEach(0..<K5ImageParser.ctcssTones.count, id: \.self) { i in
+                                            Text(String(format: "%.1f Гц", K5ImageParser.ctcssTones[i])).tag(i)
+                                        }
                                     }
+                                    .labelsHidden()
+                                    .frame(width: 140)
                                 }
-                                .labelsHidden()
-                                .frame(width: 100)
-                            }
-                            HStack {
-                                Label("RX DCS", systemImage: "number.circle").frame(width: 100, alignment: .leading)
-                                Picker("", selection: rxDcsIndex) {
-                                    ForEach(0..<K5ImageParser.dcsCodes.count, id: \.self) { i in
-                                        Text(String(format: "%03d", K5ImageParser.dcsCodes[i])).tag(i)
+                            } else if channel.toneMode == 2 {
+                                HStack {
+                                    Label("TX DCS", systemImage: "number").frame(width: 100, alignment: .leading)
+                                    Picker("", selection: txDcsIndex) {
+                                        ForEach(0..<K5ImageParser.dcsCodes.count, id: \.self) { i in
+                                            Text(String(format: "%03d", K5ImageParser.dcsCodes[i])).tag(i)
+                                        }
                                     }
+                                    .labelsHidden()
+                                    .frame(width: 100)
                                 }
-                                .labelsHidden()
-                                .frame(width: 100)
+                                HStack {
+                                    Label("RX DCS", systemImage: "number.circle").frame(width: 100, alignment: .leading)
+                                    Picker("", selection: rxDcsIndex) {
+                                        ForEach(0..<K5ImageParser.dcsCodes.count, id: \.self) { i in
+                                            Text(String(format: "%03d", K5ImageParser.dcsCodes[i])).tag(i)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                    .frame(width: 100)
+                                }
                             }
-                        }
-                    }.padding(8)
-                } label: { Label("Тоны", systemImage: "waveform") }
+                        }.padding(8)
+                    } label: { Label("Тоны", systemImage: "waveform") }}
 
                 GroupBox {
                     HStack(spacing: 20) {
